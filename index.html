@@ -283,13 +283,29 @@ async function claimAccessoryDevice(device) {
   await device.open();
   if (device.configuration === null) await device.selectConfiguration(1);
 
-  const iface = device.configuration.interfaces[0];
-  await device.claimInterface(iface.interfaceNumber);
+  console.log('Device interfaces:', device.configuration.interfaces.length);
 
-  const alt = iface.alternate;
-  const epOut = alt.endpoints.find(e => e.direction === 'out' && e.type === 'bulk');
-  if (!epOut) throw new Error('No bulk OUT endpoint found');
-  return epOut;
+  // Try each interface — on composite devices (AOA + ADB), we need
+  // the AOA interface which has bulk endpoints but isn't the ADB class
+  let lastError = null;
+  for (const iface of device.configuration.interfaces) {
+    const alt = iface.alternate;
+    const epOut = alt.endpoints.find(e => e.direction === 'out' && e.type === 'bulk');
+    if (!epOut) continue; // skip interfaces without bulk OUT
+
+    console.log(`Trying interface ${iface.interfaceNumber}: class=${alt.interfaceClass} sub=${alt.interfaceSubclass} proto=${alt.interfaceProtocol}`);
+
+    try {
+      await device.claimInterface(iface.interfaceNumber);
+      console.log(`Claimed interface ${iface.interfaceNumber}`);
+      return epOut;
+    } catch (e) {
+      console.warn(`Failed to claim interface ${iface.interfaceNumber}:`, e.message);
+      lastError = e;
+    }
+  }
+
+  throw lastError || new Error('No claimable bulk OUT interface found');
 }
 
 btnConnect.addEventListener('click', async () => {
