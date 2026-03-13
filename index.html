@@ -308,31 +308,16 @@ btnConnect.addEventListener('click', async () => {
 
     setStreamStatus('Sending AOA handshake…');
     await aoaHandshake(device);
-    setStreamStatus('Waiting for device to re-enumerate…');
+    setStreamStatus('Phone is switching to accessory mode… Select it again in the USB picker.');
 
-    const accessoryDevice = await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        navigator.usb.removeEventListener('connect', onConnect);
-        reject(new Error('Timeout waiting for accessory device'));
-      }, 10000);
+    // After AOA handshake the phone re-enumerates with a new VID/PID.
+    // Chrome treats it as a new device requiring user permission,
+    // so we need another requestDevice call.
+    // Wait a moment for re-enumeration to complete.
+    await new Promise(r => setTimeout(r, 2000));
 
-      function onConnect(event) {
-        if (isAccessoryDevice(event.device)) {
-          clearTimeout(timeout);
-          navigator.usb.removeEventListener('connect', onConnect);
-          resolve(event.device);
-        }
-      }
-      navigator.usb.addEventListener('connect', onConnect);
-
-      navigator.usb.getDevices().then(devices => {
-        const found = devices.find(isAccessoryDevice);
-        if (found) {
-          clearTimeout(timeout);
-          navigator.usb.removeEventListener('connect', onConnect);
-          resolve(found);
-        }
-      });
+    const accessoryDevice = await navigator.usb.requestDevice({
+      filters: [{ vendorId: AOA_VID, productId: 0x2D00 }, { vendorId: AOA_VID, productId: 0x2D01 }]
     });
 
     setStreamStatus('Claiming accessory device…');
