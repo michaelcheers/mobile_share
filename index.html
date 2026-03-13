@@ -817,7 +817,7 @@ btnLogs.addEventListener('click', async () => {
   logOutput.style.display = 'none';
 
   try {
-    const logs = await adbShell('logcat -d -t 500 | grep -iE "mobileshare|AndroidRuntime|FATAL|ClassNotFoundException|Error|Exception" | tail -80');
+    const logs = await adbShell('logcat -d');
     logOutput.textContent = logs || '(no crash logs found)';
     logOutput.style.display = 'block';
     setInstallStatus('Logs retrieved');
