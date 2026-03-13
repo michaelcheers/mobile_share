@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mobile Share — USB Screen Streaming</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 2rem;
+  }
+  h1 { font-size: 1.5rem; margin-bottom: 0.5rem; color: #fff; }
+  .subtitle { font-size: 0.85rem; color: #888; margin-bottom: 1.5rem; }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: 1.5rem;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #333;
+  }
+  .tab {
+    padding: 0.5rem 1.5rem;
+    background: #16213e;
+    cursor: pointer;
+    font-size: 0.9rem;
+    border: none;
+    color: #888;
+    transition: all 0.2s;
+  }
+  .tab.active { background: #4361ee; color: #fff; }
+  .tab:hover:not(.active) { background: #1e2d50; }
+
+  .panel { display: none; flex-direction: column; align-items: center; width: 100%; }
+  .panel.active { display: flex; }
+
+  .controls { display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; justify-content: center; }
+  button {
+    padding: 0.6rem 1.4rem;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    cursor: pointer;
+    font-weight: 500;
+    transition: opacity 0.2s;
+  }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-blue { background: #4361ee; color: #fff; }
+  .btn-green { background: #2ec4b6; color: #fff; }
+  .btn-red { background: #e63946; color: #fff; }
+  .btn-orange { background: #e88c30; color: #fff; }
+
+  .status-box {
+    font-size: 0.85rem;
+    padding: 0.4rem 0.8rem;
+    border-radius: 4px;
+    background: #16213e;
+    margin-bottom: 1rem;
+    min-width: 300px;
+    text-align: center;
+  }
+  #stats { font-size: 0.75rem; color: #888; margin-bottom: 1rem; }
+  #preview {
+    border: 2px solid #333;
+    border-radius: 8px;
+    background: #000;
+    max-width: 90vw;
+    max-height: 60vh;
+  }
+  video, canvas { display: none; }
+
+  .install-info {
+    max-width: 500px;
+    text-align: left;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: #aaa;
+    margin-bottom: 1rem;
+  }
+  .install-info ol { padding-left: 1.2rem; }
+  .install-info li { margin-bottom: 0.3rem; }
+  .install-info strong { color: #e0e0e0; }
+
+  .progress-bar {
+    width: 300px;
+    height: 6px;
+    background: #16213e;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 1rem;
+    display: none;
+  }
+  .progress-bar .fill {
+    height: 100%;
+    background: #2ec4b6;
+    width: 0%;
+    transition: width 0.2s;
+  }
+
+  .file-pick {
+    margin-bottom: 1rem;
+  }
+  .file-pick label {
+    display: inline-block;
+    padding: 0.5rem 1.2rem;
+    background: #333;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+  .file-pick label:hover { background: #444; }
+  .file-pick input[type="file"] { display: none; }
+  .file-name { font-size: 0.8rem; color: #888; margin-top: 0.3rem; }
+</style>
+</head>
+<body>
+
+<h1>Mobile Share</h1>
+<p class="subtitle">USB Screen Streaming to Android</p>
+
+<div class="tabs">
+  <button class="tab active" data-panel="stream-panel">Stream</button>
+  <button class="tab" data-panel="install-panel">Install App</button>
+</div>
+
+<!-- ============ STREAM PANEL ============ -->
+<div id="stream-panel" class="panel active">
+  <div class="controls">
+    <button id="btnConnect" class="btn-blue">Connect</button>
+    <button id="btnShare" class="btn-green" disabled>Share Screen</button>
+    <button id="btnStop" class="btn-red" disabled>Stop</button>
+  </div>
+  <div id="streamStatus" class="status-box">Not connected</div>
+  <div id="stats"></div>
+  <img id="preview" width="640" height="360" alt="Screen preview">
+  <video id="video" autoplay muted></video>
+  <canvas id="canvas"></canvas>
+</div>
+
+<!-- ============ INSTALL PANEL ============ -->
+<div id="install-panel" class="panel">
+  <div class="install-info">
+    <strong>Install the Mobile Share app via USB debugging:</strong>
+    <ol>
+      <li>Enable <strong>USB Debugging</strong> on your phone (Settings > Developer Options)</li>
+      <li>Connect phone via USB cable</li>
+      <li>Click <strong>Install APK</strong> and select your phone</li>
+      <li>Tap <strong>Allow</strong> on the phone's USB debugging prompt</li>
+    </ol>
+  </div>
+  <div class="controls">
+    <button id="btnInstall" class="btn-orange">Install APK</button>
+  </div>
+  <div class="file-pick">
+    <label>Or choose a custom APK <input type="file" id="apkFile" accept=".apk"></label>
+    <div class="file-name" id="apkFileName"></div>
+  </div>
+  <div class="progress-bar" id="installProgress"><div class="fill" id="installProgressFill"></div></div>
+  <div id="installStatus" class="status-box">Select an APK to install</div>
+</div>
+
+<script>
+'use strict';
+
+// =============================================
+// Tab switching
+// =============================================
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById(tab.dataset.panel).classList.add('active');
+  });
+});
+
+// =============================================
+// STREAM MODE — AOA Screen Streaming
+// =============================================
+
+const AOA_GET_PROTOCOL  = 51;
+const AOA_SEND_STRING   = 52;
+const AOA_START         = 53;
+const AOA_VID           = 0x18D1;
+const AOA_PIDS          = [0x2D00, 0x2D01];
+
+const AOA_STRINGS = [
+  'MobileShare',
+  'ScreenStream',
+  'USB Screen Streaming',
+  '1.0',
+  'https://github.com/mobile-share',
+  '0000000001',
+];
+
+let usbDevice = null;
+let endpointOut = null;
+let mediaStream = null;
+let capturing = false;
+let framesSent = 0;
+let lastFpsTime = 0;
+let fpsCount = 0;
+
+const streamStatus = document.getElementById('streamStatus');
+const statsEl   = document.getElementById('stats');
+const btnConnect = document.getElementById('btnConnect');
+const btnShare   = document.getElementById('btnShare');
+const btnStop    = document.getElementById('btnStop');
+const videoEl    = document.getElementById('video');
+const canvasEl   = document.getElementById('canvas');
+const previewEl  = document.getElementById('preview');
+const ctx        = canvasEl.getContext('2d');
+
+function setStreamStatus(msg) { streamStatus.textContent = msg; }
+
+function isAccessoryDevice(dev) {
+  return dev.vendorId === AOA_VID && AOA_PIDS.includes(dev.productId);
+}
+
+async function aoaHandshake(device) {
+  await device.open();
+  if (device.configuration === null) await device.selectConfiguration(1);
+
+  const protoResult = await device.controlTransferIn({
+    requestType: 'vendor', recipient: 'device',
+    request: AOA_GET_PROTOCOL, value: 0, index: 0,
+  }, 2);
+
+  if (protoResult.status !== 'ok' || !protoResult.data) throw new Error('GET_PROTOCOL failed');
+  const version = protoResult.data.getUint16(0, true);
+  if (version < 1) throw new Error('Device does not support AOA');
+
+  const encoder = new TextEncoder();
+  for (let i = 0; i < AOA_STRINGS.length; i++) {
+    const data = encoder.encode(AOA_STRINGS[i] + '\0');
+    const result = await device.controlTransferOut({
+      requestType: 'vendor', recipient: 'device',
+      request: AOA_SEND_STRING, value: 0, index: i,
+    }, data);
+    if (result.status !== 'ok') throw new Error(`SEND_STRING[${i}] failed`);
+  }
+
+  const startResult = await device.controlTransferOut({
+    requestType: 'vendor', recipient: 'device',
+    request: AOA_START, value: 0, index: 0,
+  });
+  if (startResult.status !== 'ok') throw new Error('START_ACCESSORY failed');
+
+  try { await device.close(); } catch (e) { /* expected */ }
+}
+
+async function claimAccessoryDevice(device) {
+  await device.open();
+  if (device.configuration === null) await device.selectConfiguration(1);
+
+  const iface = device.configuration.interfaces[0];
+  await device.claimInterface(iface.interfaceNumber);
+
+  const alt = iface.alternate;
+  const epOut = alt.endpoints.find(e => e.direction === 'out' && e.type === 'bulk');
+  if (!epOut) throw new Error('No bulk OUT endpoint found');
+  return epOut;
+}
+
+btnConnect.addEventListener('click', async () => {
+  try {
+    setStreamStatus('Requesting USB device…');
+    const device = await navigator.usb.requestDevice({ filters: [] });
+
+    if (isAccessoryDevice(device)) {
+      setStreamStatus('Device already in accessory mode, claiming…');
+      usbDevice = device;
+      endpointOut = await claimAccessoryDevice(device);
+      setStreamStatus('Connected (accessory mode)');
+      btnShare.disabled = false;
+      return;
+    }
+
+    setStreamStatus('Sending AOA handshake…');
+    await aoaHandshake(device);
+    setStreamStatus('Waiting for device to re-enumerate…');
+
+    const accessoryDevice = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        navigator.usb.removeEventListener('connect', onConnect);
+        reject(new Error('Timeout waiting for accessory device'));
+      }, 10000);
+
+      function onConnect(event) {
+        if (isAccessoryDevice(event.device)) {
+          clearTimeout(timeout);
+          navigator.usb.removeEventListener('connect', onConnect);
+          resolve(event.device);
+        }
+      }
+      navigator.usb.addEventListener('connect', onConnect);
+
+      navigator.usb.getDevices().then(devices => {
+        const found = devices.find(isAccessoryDevice);
+        if (found) {
+          clearTimeout(timeout);
+          navigator.usb.removeEventListener('connect', onConnect);
+          resolve(found);
+        }
+      });
+    });
+
+    setStreamStatus('Claiming accessory device…');
+    usbDevice = accessoryDevice;
+    endpointOut = await claimAccessoryDevice(accessoryDevice);
+    setStreamStatus('Connected — ready to share screen');
+    btnShare.disabled = false;
+  } catch (err) {
+    console.error(err);
+    setStreamStatus('Error: ' + err.message);
+  }
+});
+
+navigator.usb.addEventListener('disconnect', (event) => {
+  if (usbDevice && event.device === usbDevice) {
+    stopCapture();
+    usbDevice = null;
+    endpointOut = null;
+    btnShare.disabled = true;
+    btnStop.disabled = true;
+    setStreamStatus('Device disconnected');
+    statsEl.textContent = '';
+  }
+});
+
+async function startCapture() {
+  try {
+    mediaStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { cursor: 'always', frameRate: { ideal: 30 } },
+      audio: false,
+    });
+  } catch (err) { setStreamStatus('Screen capture cancelled'); return; }
+
+  videoEl.srcObject = mediaStream;
+  await videoEl.play();
+
+  const track = mediaStream.getVideoTracks()[0];
+  const settings = track.getSettings();
+  canvasEl.width = settings.width || 1920;
+  canvasEl.height = settings.height || 1080;
+
+  capturing = true;
+  framesSent = 0;
+  lastFpsTime = performance.now();
+  fpsCount = 0;
+  btnShare.disabled = true;
+  btnStop.disabled = false;
+  setStreamStatus('Streaming…');
+
+  track.addEventListener('ended', () => stopCapture());
+  sendFrameLoop();
+}
+
+function stopCapture() {
+  capturing = false;
+  if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+  videoEl.srcObject = null;
+  btnShare.disabled = !endpointOut;
+  btnStop.disabled = true;
+  setStreamStatus(endpointOut ? 'Connected — ready to share screen' : 'Not connected');
+  statsEl.textContent = '';
+}
+
+async function sendFrameLoop() {
+  if (!capturing || !endpointOut) return;
+
+  ctx.drawImage(videoEl, 0, 0, canvasEl.width, canvasEl.height);
+  previewEl.src = canvasEl.toDataURL('image/jpeg', 0.3);
+
+  const blob = await new Promise(resolve => canvasEl.toBlob(resolve, 'image/jpeg', 0.6));
+  if (!blob || !capturing) { if (capturing) setTimeout(sendFrameLoop, 33); return; }
+
+  const jpegBytes = new Uint8Array(await blob.arrayBuffer());
+  const frame = new Uint8Array(4 + jpegBytes.length);
+  new DataView(frame.buffer).setUint32(0, jpegBytes.length, true);
+  frame.set(jpegBytes, 4);
+
+  try {
+    await usbDevice.transferOut(endpointOut.endpointNumber, frame);
+    framesSent++;
+    fpsCount++;
+    const now = performance.now();
+    if (now - lastFpsTime >= 1000) {
+      statsEl.textContent = `${(fpsCount / ((now - lastFpsTime) / 1000)).toFixed(1)} fps · ${framesSent} frames · ${(jpegBytes.length / 1024).toFixed(0)} KB/frame`;
+      fpsCount = 0;
+      lastFpsTime = now;
+    }
+  } catch (err) {
+    console.error('Transfer error:', err);
+    if (capturing) { setStreamStatus('Transfer error: ' + err.message); stopCapture(); }
+    return;
+  }
+
+  if (capturing) setTimeout(sendFrameLoop, 33);
+}
+
+btnShare.addEventListener('click', () => startCapture());
+btnStop.addEventListener('click', () => stopCapture());
+
+
+// =============================================
+// INSTALL MODE — ADB over WebUSB
+// =============================================
+
+const ADB_CLASS = 0xFF;
+const ADB_SUBCLASS = 0x42;
+const ADB_PROTOCOL = 0x01;
+
+// ADB protocol constants
+const A_CNXN = 0x4e584e43; // CNXN
+const A_AUTH = 0x48545541; // AUTH
+const A_OPEN = 0x4e45504f; // OPEN
+const A_OKAY = 0x59414b4f; // OKAY
+const A_WRTE = 0x45545257; // WRTE
+const A_CLSE = 0x45534c43; // CLSE
+const ADB_VERSION = 0x01000001;
+const MAX_PAYLOAD = 1024 * 1024;
+const AUTH_TOKEN = 1;
+const AUTH_SIGNATURE = 2;
+const AUTH_RSAPUBLICKEY = 3;
+
+const installStatus = document.getElementById('installStatus');
+const btnInstall = document.getElementById('btnInstall');
+const apkFileInput = document.getElementById('apkFile');
+const apkFileName = document.getElementById('apkFileName');
+const progressBar = document.getElementById('installProgress');
+const progressFill = document.getElementById('installProgressFill');
+
+const APK_PATH = 'android/app/build/outputs/apk/debug/app-debug.apk';
+let customApk = null;
+
+function setInstallStatus(msg) { installStatus.textContent = msg; }
+function setProgress(pct) {
+  progressBar.style.display = pct >= 0 ? 'block' : 'none';
+  progressFill.style.width = Math.min(100, pct) + '%';
+}
+
+apkFileInput.addEventListener('change', () => {
+  const file = apkFileInput.files[0];
+  if (file) {
+    customApk = file;
+    apkFileName.textContent = `Using: ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)`;
+  }
+});
+
+async function getApkData() {
+  if (customApk) return await customApk.arrayBuffer();
+  setInstallStatus('Downloading APK…');
+  const resp = await fetch(APK_PATH);
+  if (!resp.ok) throw new Error(`Failed to fetch APK (${resp.status}). Is the file committed?`);
+  return await resp.arrayBuffer();
+}
+
+// --- ADB Message helpers ---
+function encodeAdbMessage(command, arg0, arg1, data) {
+  const dataBytes = data ? (typeof data === 'string' ? new TextEncoder().encode(data) : data) : new Uint8Array(0);
+  const header = new ArrayBuffer(24);
+  const view = new DataView(header);
+  view.setUint32(0, command, true);
+  view.setUint32(4, arg0, true);
+  view.setUint32(8, arg1, true);
+  view.setUint32(12, dataBytes.length, true);
+  // data checksum
+  let checksum = 0;
+  for (let i = 0; i < dataBytes.length; i++) checksum += dataBytes[i];
+  view.setUint32(16, checksum & 0xFFFFFFFF, true);
+  // magic = command ^ 0xFFFFFFFF
+  view.setUint32(20, (command ^ 0xFFFFFFFF) >>> 0, true);
+
+  const msg = new Uint8Array(24 + dataBytes.length);
+  msg.set(new Uint8Array(header), 0);
+  msg.set(dataBytes, 24);
+  return msg;
+}
+
+function parseAdbMessage(buffer) {
+  if (buffer.byteLength < 24) return null;
+  const view = new DataView(buffer);
+  const command = view.getUint32(0, true);
+  const arg0 = view.getUint32(4, true);
+  const arg1 = view.getUint32(8, true);
+  const dataLen = view.getUint32(12, true);
+  return { command, arg0, arg1, dataLen };
+}
+
+// --- RSA key generation for ADB auth ---
+async function generateAdbKeyPair() {
+  return await crypto.subtle.generateKey(
+    { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([0x01, 0x00, 0x01]), hash: 'SHA-1' },
+    true,
+    ['sign', 'verify']
+  );
+}
+
+async function signToken(privateKey, token) {
+  return new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privateKey, token));
+}
+
+async function getPublicKeyBase64(publicKey) {
+  const spki = await crypto.subtle.exportKey('spki', publicKey);
+  return btoa(String.fromCharCode(...new Uint8Array(spki)));
+}
+
+// --- ADB Transport ---
+class AdbTransport {
+  constructor(device, epIn, epOut) {
+    this.device = device;
+    this.epIn = epIn;
+    this.epOut = epOut;
+    this.recvBuf = new Uint8Array(0);
+  }
+
+  async send(data) {
+    await this.device.transferOut(this.epOut.endpointNumber, data);
+  }
+
+  async recv(length) {
+    // Accumulate data from bulk IN transfers
+    while (this.recvBuf.length < length) {
+      const result = await this.device.transferIn(this.epIn.endpointNumber, 16384);
+      if (result.status !== 'ok') throw new Error('USB transfer failed');
+      const chunk = new Uint8Array(result.data.buffer);
+      const combined = new Uint8Array(this.recvBuf.length + chunk.length);
+      combined.set(this.recvBuf);
+      combined.set(chunk, this.recvBuf.length);
+      this.recvBuf = combined;
+    }
+    const out = this.recvBuf.slice(0, length);
+    this.recvBuf = this.recvBuf.slice(length);
+    return out;
+  }
+
+  async recvMessage() {
+    const headerBytes = await this.recv(24);
+    const header = parseAdbMessage(headerBytes.buffer);
+    let data = new Uint8Array(0);
+    if (header.dataLen > 0) {
+      data = await this.recv(header.dataLen);
+    }
+    return { ...header, data };
+  }
+
+  async sendMessage(command, arg0, arg1, data) {
+    const msg = encodeAdbMessage(command, arg0, arg1, data);
+    // Send header and data separately if data is large
+    if (data && data.length > 0) {
+      await this.send(msg.slice(0, 24));
+      const dataBytes = msg.slice(24);
+      // Send in chunks for large payloads
+      const CHUNK = 16384;
+      for (let i = 0; i < dataBytes.length; i += CHUNK) {
+        await this.send(dataBytes.slice(i, i + CHUNK));
+      }
+    } else {
+      await this.send(msg);
+    }
+  }
+}
+
+// --- ADB connection + install ---
+async function adbInstallApk(apkData) {
+  setInstallStatus('Requesting USB device…');
+
+  // Find ADB interface
+  const device = await navigator.usb.requestDevice({
+    filters: [{ classCode: ADB_CLASS, subclassCode: ADB_SUBCLASS, protocolCode: ADB_PROTOCOL }]
+  });
+
+  await device.open();
+  if (device.configuration === null) await device.selectConfiguration(1);
+
+  // Find ADB interface
+  let adbInterface = null;
+  let epIn = null, epOut = null;
+
+  for (const iface of device.configuration.interfaces) {
+    const alt = iface.alternate;
+    if (alt.interfaceClass === ADB_CLASS &&
+        alt.interfaceSubclass === ADB_SUBCLASS &&
+        alt.interfaceProtocol === ADB_PROTOCOL) {
+      adbInterface = iface;
+      for (const ep of alt.endpoints) {
+        if (ep.direction === 'in' && ep.type === 'bulk') epIn = ep;
+        if (ep.direction === 'out' && ep.type === 'bulk') epOut = ep;
+      }
+      break;
+    }
+  }
+
+  if (!adbInterface || !epIn || !epOut) {
+    throw new Error('ADB interface not found. Is USB debugging enabled?');
+  }
+
+  await device.claimInterface(adbInterface.interfaceNumber);
+  const transport = new AdbTransport(device, epIn, epOut);
+
+  // --- ADB handshake ---
+  setInstallStatus('ADB handshake…');
+  const keyPair = await generateAdbKeyPair();
+
+  // Send CNXN
+  await transport.sendMessage(A_CNXN, ADB_VERSION, MAX_PAYLOAD, 'host::MobileShare\0');
+
+  // Handle AUTH challenge
+  let connected = false;
+  while (!connected) {
+    const msg = await transport.recvMessage();
+
+    if (msg.command === A_AUTH && msg.arg0 === AUTH_TOKEN) {
+      // Try signing the token
+      const signature = await signToken(keyPair.privateKey, msg.data);
+      await transport.sendMessage(A_AUTH, AUTH_SIGNATURE, 0, signature);
+
+      // Device may ask again or accept — try reading response
+      const msg2 = await transport.recvMessage();
+
+      if (msg2.command === A_CNXN) {
+        connected = true;
+      } else if (msg2.command === A_AUTH) {
+        // Send public key — user will see "Allow USB debugging?" dialog
+        setInstallStatus('Tap "Allow" on your phone…');
+        const pubKeyB64 = await getPublicKeyBase64(keyPair.publicKey);
+        await transport.sendMessage(A_AUTH, AUTH_RSAPUBLICKEY, 0, pubKeyB64 + '\0');
+
+        // Wait for CNXN after user approves
+        const msg3 = await transport.recvMessage();
+        if (msg3.command === A_CNXN) {
+          connected = true;
+        } else {
+          throw new Error('ADB authentication failed');
+        }
+      }
+    } else if (msg.command === A_CNXN) {
+      connected = true;
+    } else {
+      throw new Error('Unexpected ADB response: 0x' + msg.command.toString(16));
+    }
+  }
+
+  setInstallStatus('Connected via ADB, starting install…');
+
+  // --- Open shell stream for install ---
+  const localId = 1;
+  const installCmd = `exec:cmd package install -S ${apkData.byteLength}\0`;
+  await transport.sendMessage(A_OPEN, localId, 0, installCmd);
+
+  // Wait for OKAY
+  const openReply = await transport.recvMessage();
+  if (openReply.command !== A_OKAY) throw new Error('Failed to open install stream');
+  const remoteId = openReply.arg0;
+
+  // --- Stream APK data ---
+  const CHUNK_SIZE = 65536;
+  let sent = 0;
+  setProgress(0);
+
+  while (sent < apkData.byteLength) {
+    const end = Math.min(sent + CHUNK_SIZE, apkData.byteLength);
+    const chunk = new Uint8Array(apkData.slice(sent, end));
+
+    await transport.sendMessage(A_WRTE, localId, remoteId, chunk);
+
+    // Wait for OKAY acknowledgement
+    const ack = await transport.recvMessage();
+    if (ack.command !== A_OKAY) throw new Error('Transfer error during install');
+
+    sent = end;
+    const pct = (sent / apkData.byteLength * 100);
+    setProgress(pct);
+    setInstallStatus(`Installing… ${pct.toFixed(0)}% (${(sent / 1024 / 1024).toFixed(1)} / ${(apkData.byteLength / 1024 / 1024).toFixed(1)} MB)`);
+  }
+
+  // --- Read install result ---
+  setInstallStatus('Waiting for install to complete…');
+  let result = '';
+  while (true) {
+    const msg = await transport.recvMessage();
+    if (msg.command === A_WRTE) {
+      result += new TextDecoder().decode(msg.data);
+      await transport.sendMessage(A_OKAY, localId, remoteId);
+    } else if (msg.command === A_CLSE) {
+      break;
+    }
+  }
+
+  // Close
+  await transport.sendMessage(A_CLSE, localId, remoteId);
+
+  try { await device.close(); } catch (e) { /* ok */ }
+
+  return result.trim();
+}
+
+btnInstall.addEventListener('click', async () => {
+  btnInstall.disabled = true;
+  setProgress(0);
+
+  try {
+    const apkData = await getApkData();
+    const result = await adbInstallApk(apkData);
+
+    if (result.includes('Success')) {
+      setInstallStatus('Install successful! You can now switch to Stream tab.');
+      setProgress(100);
+    } else {
+      setInstallStatus('Install result: ' + result);
+    }
+  } catch (err) {
+    console.error('Install error:', err);
+    setInstallStatus('Error: ' + err.message);
+    setProgress(-1);
+  }
+
+  btnInstall.disabled = false;
+});
+
+</script>
+
+</body>
+</html>

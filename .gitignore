@@ -1,0 +1,24 @@
+# Gradle
+.gradle/
+android/build/
+
+# Ignore build contents, but carve out path to APK
+android/app/build/*
+!android/app/build/outputs/
+android/app/build/outputs/*
+!android/app/build/outputs/apk/
+android/app/build/outputs/apk/*
+!android/app/build/outputs/apk/debug/
+android/app/build/outputs/apk/debug/*
+!android/app/build/outputs/apk/debug/app-debug.apk
+
+local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

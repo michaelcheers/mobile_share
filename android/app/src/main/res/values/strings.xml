@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Mobile Share</string>
+    <string name="waiting_for_connection">Waiting for USB connection…</string>
+    <string name="connected">Connected — receiving frames</string>
+    <string name="disconnected">USB disconnected</string>
+</resources>
