@@ -120,6 +120,25 @@
   .file-pick label:hover { background: #444; }
   .file-pick input[type="file"] { display: none; }
   .file-name { font-size: 0.8rem; color: #888; margin-top: 0.3rem; }
+
+  #logOutput {
+    display: none;
+    width: 90vw;
+    max-width: 700px;
+    max-height: 300px;
+    overflow: auto;
+    background: #0d1117;
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 0.8rem;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: #f0883e;
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin-top: 1rem;
+  }
 </style>
 </head>
 <body>
@@ -159,6 +178,7 @@
   </div>
   <div class="controls">
     <button id="btnInstall" class="btn-orange">Install APK</button>
+    <button id="btnLogs" class="btn-blue">View Crash Logs</button>
   </div>
   <div class="file-pick">
     <label>Or choose a custom APK <input type="file" id="apkFile" accept=".apk"></label>
@@ -166,6 +186,7 @@
   </div>
   <div class="progress-bar" id="installProgress"><div class="fill" id="installProgressFill"></div></div>
   <div id="installStatus" class="status-box">Select an APK to install</div>
+  <pre id="logOutput"></pre>
 </div>
 
 <script>
@@ -704,6 +725,109 @@ async function adbInstallApk(apkData) {
 
   return result.trim();
 }
+
+const btnLogs = document.getElementById('btnLogs');
+const logOutput = document.getElementById('logOutput');
+
+// --- ADB shell command execution ---
+async function adbShell(command) {
+  const device = await navigator.usb.requestDevice({
+    filters: [{ classCode: ADB_CLASS, subclassCode: ADB_SUBCLASS, protocolCode: ADB_PROTOCOL }]
+  });
+
+  await device.open();
+  if (device.configuration === null) await device.selectConfiguration(1);
+
+  let adbInterface = null;
+  let epIn = null, epOut = null;
+
+  for (const iface of device.configuration.interfaces) {
+    const alt = iface.alternate;
+    if (alt.interfaceClass === ADB_CLASS &&
+        alt.interfaceSubclass === ADB_SUBCLASS &&
+        alt.interfaceProtocol === ADB_PROTOCOL) {
+      adbInterface = iface;
+      for (const ep of alt.endpoints) {
+        if (ep.direction === 'in' && ep.type === 'bulk') epIn = ep;
+        if (ep.direction === 'out' && ep.type === 'bulk') epOut = ep;
+      }
+      break;
+    }
+  }
+
+  if (!adbInterface || !epIn || !epOut) throw new Error('ADB interface not found');
+
+  await device.claimInterface(adbInterface.interfaceNumber);
+  const transport = new AdbTransport(device, epIn, epOut);
+
+  // ADB handshake (reuse same auth flow)
+  const keyPair = await generateAdbKeyPair();
+  await transport.sendMessage(A_CNXN, ADB_VERSION, MAX_PAYLOAD, 'host::MobileShare\0');
+
+  let connected = false;
+  while (!connected) {
+    const msg = await transport.recvMessage();
+    if (msg.command === A_CNXN) {
+      connected = true;
+    } else if (msg.command === A_AUTH && msg.arg0 === AUTH_TOKEN) {
+      const signature = await signToken(keyPair.privateKey, msg.data);
+      await transport.sendMessage(A_AUTH, AUTH_SIGNATURE, 0, signature);
+      const msg2 = await transport.recvMessage();
+      if (msg2.command === A_CNXN) {
+        connected = true;
+      } else if (msg2.command === A_AUTH) {
+        setInstallStatus('Tap "Allow" on your phone…');
+        const pubKeyB64 = await getPublicKeyBase64(keyPair.publicKey);
+        await transport.sendMessage(A_AUTH, AUTH_RSAPUBLICKEY, 0, pubKeyB64 + '\0');
+        const msg3 = await transport.recvMessage();
+        if (msg3.command === A_CNXN) connected = true;
+        else throw new Error('ADB auth failed');
+      }
+    }
+  }
+
+  // Open shell stream
+  const localId = 1;
+  await transport.sendMessage(A_OPEN, localId, 0, `shell:${command}\0`);
+
+  const openReply = await transport.recvMessage();
+  if (openReply.command !== A_OKAY) throw new Error('Failed to open shell');
+  const remoteId = openReply.arg0;
+
+  // Read all output
+  let output = '';
+  while (true) {
+    const msg = await transport.recvMessage();
+    if (msg.command === A_WRTE) {
+      output += new TextDecoder().decode(msg.data);
+      await transport.sendMessage(A_OKAY, localId, remoteId);
+    } else if (msg.command === A_CLSE) {
+      break;
+    }
+  }
+
+  await transport.sendMessage(A_CLSE, localId, remoteId);
+  try { await device.close(); } catch (e) { /* ok */ }
+  return output;
+}
+
+btnLogs.addEventListener('click', async () => {
+  btnLogs.disabled = true;
+  setInstallStatus('Fetching crash logs…');
+  logOutput.style.display = 'none';
+
+  try {
+    const logs = await adbShell('logcat -d -t 100 --pid=$(pidof com.mobileshare) 2>/dev/null || logcat -d -t 200 -s AndroidRuntime:E dalvikvm:E');
+    logOutput.textContent = logs || '(no crash logs found)';
+    logOutput.style.display = 'block';
+    setInstallStatus('Logs retrieved');
+  } catch (err) {
+    console.error('Log error:', err);
+    setInstallStatus('Error: ' + err.message);
+  }
+
+  btnLogs.disabled = false;
+});
 
 btnInstall.addEventListener('click', async () => {
   btnInstall.disabled = true;
