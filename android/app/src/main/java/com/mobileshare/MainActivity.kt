@@ -1,39 +1,25 @@
 package com.mobileshare
 
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.hardware.usb.UsbAccessory
-import android.hardware.usb.UsbManager
+import android.app.Activity
+import android.net.LocalServerSocket
+import android.net.LocalSocket
 import android.os.Build
 import android.os.Bundle
-import android.os.ParcelFileDescriptor
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.widget.TextView
-import android.app.Activity
-import java.io.FileInputStream
+import java.io.InputStream
 
 class MainActivity : Activity() {
 
     private lateinit var frameDisplay: FrameDisplayView
     private lateinit var statusText: TextView
 
-    private var fileDescriptor: ParcelFileDescriptor? = null
-    private var inputStream: FileInputStream? = null
-    private var frameReader: UsbFrameReader? = null
-
-    private val usbDetachReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            if (UsbManager.ACTION_USB_ACCESSORY_DETACHED == intent.action) {
-                closeAccessory()
-                statusText.text = getString(R.string.disconnected)
-                statusText.visibility = View.VISIBLE
-            }
-        }
-    }
+    private var serverThread: Thread? = null
+    private var serverSocket: LocalServerSocket? = null
+    private var clientSocket: LocalSocket? = null
+    private var frameReader: FrameReader? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,84 +29,74 @@ class MainActivity : Activity() {
         statusText = findViewById(R.id.statusText)
 
         goFullscreen()
-
-        registerReceiver(
-            usbDetachReceiver,
-            IntentFilter(UsbManager.ACTION_USB_ACCESSORY_DETACHED),
-            RECEIVER_NOT_EXPORTED
-        )
-
-        // Check if launched via USB accessory intent
-        if (intent != null) {
-            handleIntent(intent)
-        }
+        startServer()
     }
 
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        handleIntent(intent)
-    }
+    private fun startServer() {
+        serverThread = Thread({
+            try {
+                // Close any previous socket with this name
+                try { serverSocket?.close() } catch (_: Exception) {}
 
-    private fun handleIntent(intent: Intent) {
-        if (UsbManager.ACTION_USB_ACCESSORY_ATTACHED == intent.action) {
-            val accessory = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                intent.getParcelableExtra(UsbManager.EXTRA_ACCESSORY, UsbAccessory::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                intent.getParcelableExtra(UsbManager.EXTRA_ACCESSORY)
-            }
-            if (accessory != null) {
-                openAccessory(accessory)
-                return
-            }
-        }
+                val server = LocalServerSocket("mobileshare")
+                serverSocket = server
 
-        // Fallback: check connected accessories
-        val usbManager = getSystemService(USB_SERVICE) as UsbManager
-        val accessories = usbManager.accessoryList
-        if (!accessories.isNullOrEmpty()) {
-            openAccessory(accessories[0])
-        }
-    }
-
-    private fun openAccessory(accessory: UsbAccessory) {
-        closeAccessory()
-
-        val usbManager = getSystemService(USB_SERVICE) as UsbManager
-        val pfd = usbManager.openAccessory(accessory)
-        if (pfd == null) {
-            statusText.text = "Failed to open USB accessory"
-            return
-        }
-
-        fileDescriptor = pfd
-        val stream = FileInputStream(pfd.fileDescriptor)
-        inputStream = stream
-
-        statusText.text = getString(R.string.connected)
-
-        val reader = UsbFrameReader(stream) { bitmap ->
-            runOnUiThread {
-                frameDisplay.updateFrame(bitmap)
-                // Hide status after first frame
-                if (statusText.visibility == View.VISIBLE) {
-                    statusText.visibility = View.GONE
+                runOnUiThread {
+                    statusText.text = getString(R.string.waiting_for_connection)
                 }
+
+                while (!Thread.currentThread().isInterrupted) {
+                    // Accept a connection (blocks)
+                    val client = server.accept() ?: continue
+                    clientSocket = client
+
+                    runOnUiThread {
+                        statusText.text = getString(R.string.connected)
+                    }
+
+                    // Read frames from this connection
+                    val reader = FrameReader(client.inputStream) { bitmap ->
+                        runOnUiThread {
+                            frameDisplay.updateFrame(bitmap)
+                            if (statusText.visibility == View.VISIBLE) {
+                                statusText.visibility = View.GONE
+                            }
+                        }
+                    }
+                    frameReader = reader
+                    reader.run() // blocks until connection drops
+
+                    // Connection ended — show status and loop to accept again
+                    frameReader = null
+                    try { client.close() } catch (_: Exception) {}
+                    clientSocket = null
+
+                    runOnUiThread {
+                        statusText.text = getString(R.string.waiting_for_connection)
+                        statusText.visibility = View.VISIBLE
+                    }
+                }
+            } catch (_: Exception) {
+                // Server socket closed
             }
+        }, "SocketServer").apply {
+            isDaemon = true
+            start()
         }
-        frameReader = reader
-        reader.start()
     }
 
-    private fun closeAccessory() {
+    private fun stopServer() {
         frameReader?.shutdown()
         frameReader = null
 
-        try { inputStream?.close() } catch (_: Exception) {}
-        inputStream = null
+        try { clientSocket?.close() } catch (_: Exception) {}
+        clientSocket = null
 
-        try { fileDescriptor?.close() } catch (_: Exception) {}
-        fileDescriptor = null
+        try { serverSocket?.close() } catch (_: Exception) {}
+        serverSocket = null
+
+        serverThread?.interrupt()
+        serverThread = null
     }
 
     private fun goFullscreen() {
@@ -145,7 +121,6 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        unregisterReceiver(usbDetachReceiver)
-        closeAccessory()
+        stopServer()
     }
 }
