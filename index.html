@@ -130,6 +130,7 @@
     margin-top: 1rem;
   }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dist/qrcode.js" integrity="sha256-eeyG+ChWAFsciHkFz8z8++w4Icphx/1alS+qX3ePeRw=" crossorigin="anonymous"></script>
 </head>
 <body>
 
@@ -143,14 +144,25 @@
 
 <!-- ============ STREAM PANEL ============ -->
 <div id="stream-panel" class="panel active">
-  <div class="controls">
-    <button id="btnConnect" class="btn-blue">Connect & Share</button>
-    <button id="btnStop" class="btn-red" disabled>Stop</button>
+  <!-- Pairing UI (shown when not paired) -->
+  <div id="pairSection" style="display:none;flex-direction:column;align-items:center">
+    <p style="color:#aaa;margin-bottom:1rem;font-size:0.9rem">Scan this QR code with the Mobile Share app on your phone:</p>
+    <div id="qrContainer" style="background:#fff;padding:16px;border-radius:8px;margin-bottom:1rem"></div>
+    <button id="btnPaired" class="btn-green" style="margin-bottom:0.5rem">Done — I've scanned it</button>
+    <button id="btnResetPairing" class="btn-red" style="font-size:0.8rem">Generate New Code</button>
   </div>
-  <div id="streamStatus" class="status-box">Not connected</div>
-  <div id="stats"></div>
-  <video id="video" autoplay muted style="max-width:90vw;max-height:60vh;border:2px solid #333;border-radius:8px;background:#000"></video>
-  <canvas id="canvas"></canvas>
+  <!-- Stream UI (shown when paired) -->
+  <div id="streamSection">
+    <div class="controls">
+      <button id="btnConnect" class="btn-blue">Connect & Share</button>
+      <button id="btnStop" class="btn-red" disabled>Stop</button>
+      <button id="btnUnpair" class="btn-red" style="font-size:0.8rem">Unpair</button>
+    </div>
+    <div id="streamStatus" class="status-box">Not connected</div>
+    <div id="stats"></div>
+    <video id="video" autoplay muted style="max-width:90vw;max-height:60vh;border:2px solid #333;border-radius:8px;background:#000"></video>
+    <canvas id="canvas"></canvas>
+  </div>
 </div>
 
 <!-- ============ INSTALL PANEL ============ -->
@@ -384,6 +396,12 @@ let framesSent = 0;
 let lastFpsTime = 0;
 let fpsCount = 0;
 
+const pairSection = document.getElementById('pairSection');
+const streamSection = document.getElementById('streamSection');
+const qrContainer = document.getElementById('qrContainer');
+const btnPaired = document.getElementById('btnPaired');
+const btnResetPairing = document.getElementById('btnResetPairing');
+const btnUnpair = document.getElementById('btnUnpair');
 const streamStatus = document.getElementById('streamStatus');
 const statsEl   = document.getElementById('stats');
 const btnConnect = document.getElementById('btnConnect');
@@ -393,6 +411,53 @@ const canvasEl   = document.getElementById('canvas');
 const ctx        = canvasEl.getContext('2d', { willReadFrequently: false });
 
 function setStreamStatus(msg) { streamStatus.textContent = msg; }
+
+// --- Pairing ---
+function generateSecret() {
+  const secret = crypto.randomUUID();
+  localStorage.setItem('mobileshare-secret', secret);
+  return secret;
+}
+
+function showPairingUI() {
+  const secret = localStorage.getItem('mobileshare-secret') || generateSecret();
+  qrContainer.innerHTML = '';
+  const qr = qrcode(0, 'M');
+  qr.addData(secret);
+  qr.make();
+  qrContainer.innerHTML = qr.createSvgTag(6, 0);
+  pairSection.style.display = 'flex';
+  streamSection.style.display = 'none';
+}
+
+function showStreamUI() {
+  pairSection.style.display = 'none';
+  streamSection.style.display = '';
+}
+
+// Show QR on first visit; show stream UI if already paired
+if (localStorage.getItem('mobileshare-paired')) {
+  showStreamUI();
+} else {
+  showPairingUI();
+}
+
+btnPaired.addEventListener('click', () => {
+  localStorage.setItem('mobileshare-paired', '1');
+  showStreamUI();
+});
+
+btnResetPairing.addEventListener('click', () => {
+  localStorage.removeItem('mobileshare-secret');
+  localStorage.removeItem('mobileshare-paired');
+  showPairingUI();
+});
+
+btnUnpair.addEventListener('click', () => {
+  localStorage.removeItem('mobileshare-secret');
+  localStorage.removeItem('mobileshare-paired');
+  showPairingUI();
+});
 
 btnConnect.addEventListener('click', async () => {
   try {
@@ -405,6 +470,22 @@ btnConnect.addEventListener('click', async () => {
 
     // Open connection to the app's local socket
     streamIds = await adbOpen(transport, 'localabstract:mobileshare');
+
+    // Verify app identity — read secret, compare to stored
+    setStreamStatus('Verifying app…');
+    const secretMsg = await transport.recvMessage();
+    if (secretMsg.command !== A_WRTE) throw new Error('Unexpected response from app');
+    await transport.sendMessage(A_OKAY, streamIds.localId, streamIds.remoteId);
+    const appSecret = new TextDecoder().decode(secretMsg.data);
+    const storedSecret = localStorage.getItem('mobileshare-secret') || '';
+    if (appSecret !== storedSecret) {
+      throw new Error(appSecret ? 'Security mismatch — unpair and re-pair the app' : 'App not paired — open the app and scan the QR code first');
+    }
+    // Send confirmation byte
+    await transport.sendMessage(A_WRTE, streamIds.localId, streamIds.remoteId, new Uint8Array([1]));
+    const confirmAck = await transport.recvMessage();
+    if (confirmAck.command !== A_OKAY) throw new Error('Confirmation failed');
+
     setStreamStatus('Socket connected. Starting screen capture…');
 
     // Start screen capture immediately
@@ -587,15 +668,15 @@ btnInstall.addEventListener('click', async () => {
       } else if (msg.command === A_CLSE) break;
     }
     await transport.sendMessage(A_CLSE, localId, remoteId);
-    try { await device.close(); } catch (e) {}
 
     result = result.trim();
     if (result.includes('Success')) {
-      setInstallStatus('Install successful! Open the app, then switch to Stream tab.');
+      setInstallStatus('Install successful! Open the app and scan the QR code to pair.');
       setProgress(100);
     } else {
       setInstallStatus('Install result: ' + result);
     }
+    try { await device.close(); } catch (e) {}
   } catch (err) {
     console.error('Install error:', err);
     setInstallStatus('Error: ' + err.message);
