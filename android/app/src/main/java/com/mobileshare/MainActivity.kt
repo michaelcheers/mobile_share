@@ -60,7 +60,6 @@ class MainActivity : Activity() {
     private fun startPairing() {
         statusText.text = getString(R.string.scan_qr)
         frameDisplay.visibility = View.GONE
-        qrScanner.visibility = View.VISIBLE
 
         qrScanner.onQrDecoded = { secret ->
             saveSecret(secret)
@@ -71,16 +70,18 @@ class MainActivity : Activity() {
             startServer()
         }
 
-        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            qrScanner.visibility = View.VISIBLE
+        } else {
             requestPermissions(arrayOf(Manifest.permission.CAMERA), CAMERA_REQUEST)
         }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         if (requestCode == CAMERA_REQUEST && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            // Re-create the scanner surface to trigger camera open
-            qrScanner.visibility = View.GONE
             qrScanner.visibility = View.VISIBLE
+        } else {
+            statusText.text = "Camera permission required for pairing"
         }
     }
 
