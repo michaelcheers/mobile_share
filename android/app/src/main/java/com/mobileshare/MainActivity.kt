@@ -6,6 +6,7 @@ import android.net.LocalSocket
 import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.view.WindowManager
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.widget.TextView
@@ -28,6 +29,7 @@ class MainActivity : Activity() {
         frameDisplay = findViewById(R.id.frameDisplay)
         statusText = findViewById(R.id.statusText)
 
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         goFullscreen()
         startServer()
     }

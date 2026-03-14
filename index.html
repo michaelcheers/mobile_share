@@ -68,14 +68,7 @@
     text-align: center;
   }
   #stats { font-size: 0.75rem; color: #888; margin-bottom: 1rem; }
-  #preview {
-    border: 2px solid #333;
-    border-radius: 8px;
-    background: #000;
-    max-width: 90vw;
-    max-height: 60vh;
-  }
-  video, canvas { display: none; }
+  canvas { display: none; }
 
   .install-info {
     max-width: 500px;
@@ -156,8 +149,7 @@
   </div>
   <div id="streamStatus" class="status-box">Not connected</div>
   <div id="stats"></div>
-  <img id="preview" width="640" height="360" alt="Screen preview">
-  <video id="video" autoplay muted></video>
+  <video id="video" autoplay muted style="max-width:90vw;max-height:60vh;border:2px solid #333;border-radius:8px;background:#000"></video>
   <canvas id="canvas"></canvas>
 </div>
 
@@ -305,7 +297,7 @@ class AdbTransport {
     await this.send(msg.slice(0, 24));
     if (msg.length > 24) {
       const payload = msg.slice(24);
-      const CHUNK = 16384;
+      const CHUNK = 65536;
       for (let i = 0; i < payload.length; i += CHUNK) {
         await this.send(payload.slice(i, i + CHUNK));
       }
@@ -398,8 +390,7 @@ const btnConnect = document.getElementById('btnConnect');
 const btnStop    = document.getElementById('btnStop');
 const videoEl    = document.getElementById('video');
 const canvasEl   = document.getElementById('canvas');
-const previewEl  = document.getElementById('preview');
-const ctx        = canvasEl.getContext('2d');
+const ctx        = canvasEl.getContext('2d', { willReadFrequently: false });
 
 function setStreamStatus(msg) { streamStatus.textContent = msg; }
 
@@ -437,8 +428,13 @@ async function startCapture() {
 
   const track = mediaStream.getVideoTracks()[0];
   const settings = track.getSettings();
-  canvasEl.width = settings.width || 1920;
-  canvasEl.height = settings.height || 1080;
+  const srcW = settings.width || 1920;
+  const srcH = settings.height || 1080;
+  // Scale down to max 1280x720 to reduce JPEG encode time and size
+  const MAX_W = 1280, MAX_H = 720;
+  const scale = Math.min(1, MAX_W / srcW, MAX_H / srcH);
+  canvasEl.width = Math.round(srcW * scale);
+  canvasEl.height = Math.round(srcH * scale);
 
   capturing = true;
   framesSent = 0;
@@ -477,10 +473,9 @@ async function sendFrameLoop() {
   if (!capturing || !adbTransport || !streamIds) return;
 
   ctx.drawImage(videoEl, 0, 0, canvasEl.width, canvasEl.height);
-  previewEl.src = canvasEl.toDataURL('image/jpeg', 0.3);
 
-  const blob = await new Promise(resolve => canvasEl.toBlob(resolve, 'image/jpeg', 0.6));
-  if (!blob || !capturing) { if (capturing) setTimeout(sendFrameLoop, 33); return; }
+  const blob = await new Promise(resolve => canvasEl.toBlob(resolve, 'image/jpeg', 0.35));
+  if (!blob || !capturing) { if (capturing) requestAnimationFrame(sendFrameLoop); return; }
 
   const jpegBytes = new Uint8Array(await blob.arrayBuffer());
 
@@ -490,10 +485,13 @@ async function sendFrameLoop() {
   frame.set(jpegBytes, 4);
 
   try {
-    // Send frame data as ADB WRTE, wait for OKAY
-    await adbTransport.sendMessage(A_WRTE, streamIds.localId, streamIds.remoteId, frame);
-    const ack = await adbTransport.recvMessage();
-    if (ack.command !== A_OKAY) throw new Error('No ACK from device');
+    // Split into multiple WRTE messages if frame exceeds MAX_PAYLOAD
+    for (let off = 0; off < frame.length; off += MAX_PAYLOAD) {
+      const chunk = frame.slice(off, Math.min(off + MAX_PAYLOAD, frame.length));
+      await adbTransport.sendMessage(A_WRTE, streamIds.localId, streamIds.remoteId, chunk);
+      const ack = await adbTransport.recvMessage();
+      if (ack.command !== A_OKAY) throw new Error('No ACK from device');
+    }
 
     framesSent++;
     fpsCount++;
@@ -509,7 +507,7 @@ async function sendFrameLoop() {
     return;
   }
 
-  if (capturing) setTimeout(sendFrameLoop, 0);
+  if (capturing) requestAnimationFrame(sendFrameLoop);
 }
 
 btnStop.addEventListener('click', () => stopCapture());
