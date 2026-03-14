@@ -20,7 +20,9 @@ import android.util.AttributeSet
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import com.google.zxing.BarcodeFormat
 import com.google.zxing.BinaryBitmap
+import com.google.zxing.DecodeHintType
 import com.google.zxing.MultiFormatReader
 import com.google.zxing.NotFoundException
 import com.google.zxing.PlanarYUVLuminanceSource
@@ -40,7 +42,12 @@ class QrScannerView @JvmOverloads constructor(
     private var imageReader: ImageReader? = null
     private var bgThread: HandlerThread? = null
     private var bgHandler: Handler? = null
-    private val reader = MultiFormatReader()
+    private val reader = MultiFormatReader().apply {
+        setHints(mapOf(
+            DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE),
+            DecodeHintType.TRY_HARDER to true,
+        ))
+    }
     private var scanning = true
 
     private val promptPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -107,11 +114,12 @@ class QrScannerView @JvmOverloads constructor(
             if (!scanning) { image.close(); return@setOnImageAvailableListener }
             try {
                 val plane = image.planes[0]
+                val rowStride = plane.rowStride
                 val buffer = plane.buffer
                 val data = ByteArray(buffer.remaining())
                 buffer.get(data)
                 val source = PlanarYUVLuminanceSource(
-                    data, image.width, image.height,
+                    data, rowStride, image.height,
                     0, 0, image.width, image.height, false
                 )
                 val bitmap = BinaryBitmap(HybridBinarizer(source))
